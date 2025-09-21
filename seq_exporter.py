@@ -613,69 +613,24 @@ def run_pipeline(db_path: str,
 # Main entry point
 # =========================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Export .seq files to MP4/AVI using CLExport")
-
-    # Required arguments
-    parser.add_argument("--db", required=True, help="Path to SQLite database")
-    parser.add_argument("--seq-root", required=True, help="Root directory containing sequence files")
-    parser.add_argument("--out-root", required=True, help="Output root directory")
-
-    # Optional arguments
-    parser.add_argument("--table", default="seq_status", help="Database table name (default: seq_status)")
-    parser.add_argument("--only-value", type=int, default=1, help="Export channels with this value (default: 1)")
-    parser.add_argument("--skip-existing", action="store_true", help="Skip if valid export already exists")
-    parser.add_argument("--clean-invalid", action="store_true",
-                        help="Remove invalid/incomplete exports before processing")
-    parser.add_argument("--fallback-avi", action="store_true", help="Try AVI export if MP4 fails")
-    parser.add_argument("--simulate", action="store_true", help="Simulate export without actual conversion")
-    parser.add_argument("--debug", action="store_true", help="Enable debug output")
-    parser.add_argument("--spawn-console", action="store_true", help="Spawn console window for each export")
-
-    args = parser.parse_args()
-
-    # You can also hardcode values here if you prefer
-    # Uncomment the following to use hardcoded values instead of command line:
-    """
-    DB_PATH   = r"F:\Room_8_Data\Scalpel_Raz\ScalpelDatabase.sqlite"
-    SEQ_ROOT  = r"F:\Room_8_Data\Sequence_Backup"
-    OUT_ROOT  = r"F:\Room_8_Data\Recordings"
-    TABLE     = "seq_status"
-    ONLY_VALUE = 1
-    SKIP_EXISTING = True    # Skip files that already exist
-    CLEAN_INVALID = True    # Clean up invalid files
-    FALLBACK_AVI = True     # Try AVI if MP4 fails
-    SIMULATE = False
-    DEBUG = True
-    SPAWN_CONSOLE = False
+    # Hard-coded defaults – just hit Run in PyCharm
+    DB_PATH = r"F:\Room_8_Data\Scalpel_Raz\ScalpelDatabase.sqlite"
+    SEQ_ROOT = r"F:\Room_8_Data\Sequence_Backup"
+    OUT_ROOT = r"F:\Room_8_Data\Recordings"
+    TABLE = "seq_status"
 
     run_pipeline(
         db_path=DB_PATH,
         table=TABLE,
         seq_root=SEQ_ROOT,
         out_root=OUT_ROOT,
-        channel_names={},
-        only_value=ONLY_VALUE,
-        simulate=SIMULATE,
-        debug=DEBUG,
-        spawn_console=SPAWN_CONSOLE,
-        skip_existing=SKIP_EXISTING,
-        clean_invalid=CLEAN_INVALID,
-        fallback_avi=FALLBACK_AVI
+        channel_names={},  # add mapping if you want different names
+        only_value=1,  # which DB flag to export
+        simulate=False,  # True = no export, just print
+        debug=True,  # print extra info
+        spawn_console=False,  # True = open a window per export
+        skip_existing=True,  # skip files already exported
+        clean_invalid=True,  # remove partial files first
+        fallback_avi=False  # try AVI if MP4 fails
     )
-    """
 
-    # Use command line arguments
-    run_pipeline(
-        db_path=args.db,
-        table=args.table,
-        seq_root=args.seq_root,
-        out_root=args.out_root,
-        channel_names={},
-        only_value=args.only_value,
-        simulate=args.simulate,
-        debug=args.debug,
-        spawn_console=args.spawn_console,
-        skip_existing=args.skip_existing,
-        clean_invalid=args.clean_invalid,
-        fallback_avi=args.fallback_avi
-    )
