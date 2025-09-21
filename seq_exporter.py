@@ -6,14 +6,15 @@ import time
 from subprocess import Popen, CREATE_NEW_CONSOLE, PIPE, STDOUT
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Iterable
+import argparse
 
 # ============================================
 # Cameras (columns expected in your seq_status)
 # ============================================
 CAMERAS = [
-    "Cart_Center_2","Cart_LT_4","Cart_RT_1",
-    "General_3","Monitor","Patient_Monitor",
-    "Ventilator_Monitor","Injection_Port"
+    "Cart_Center_2", "Cart_LT_4", "Cart_RT_1",
+    "General_3", "Monitor", "Patient_Monitor",
+    "Ventilator_Monitor", "Injection_Port"
 ]
 
 # ============================================
@@ -26,15 +27,18 @@ CLEXPORT_PATHS = [
 ]
 
 # ============================================
-# Tuning knobs (aggressive fail-fast)
+# Tuning knobs (adjusted for better success rate)
 # ============================================
-MAX_RETRIES = 2                 # fewer attempts before skipping
-TIMEOUT_SECS = 12               # hard kill if a single attempt exceeds this
-KILL_AFTER_ERROR_LINES = 4      # kill early after this many spam error lines
-SUPPRESS_CLEXPORT_OUTPUT = True # keep console clean; we add our own progress prints
+MAX_RETRIES_MP4 = 2  # attempts for MP4
+MAX_RETRIES_AVI = 1  # attempts for AVI fallback
+TIMEOUT_SECS = 20  # increased timeout for larger files
+KILL_AFTER_ERROR_LINES = 6  # slightly more tolerant
+SUPPRESS_CLEXPORT_OUTPUT = True  # keep console clean
+MIN_VALID_FILE_SIZE_MB = 1.0  # Minimum size for valid MP4/AVI file
 
-# Broader phrase so we catch both MP4/AVI variants if CLExport changes wording
+# Broader phrase so we catch both MP4/AVI variants
 ERROR_LINE_SIGNATURE = "Error writing video"
+
 
 # =========================
 # CLExport helpers
@@ -59,16 +63,85 @@ def _build_cmd(clexport_path: str, seq_path: Path, out_dir: Path, exported_name:
     ]
 
 
+def is_valid_video_file(file_path: Path, min_size_mb: float = MIN_VALID_FILE_SIZE_MB) -> bool:
+    """Check if video file exists and has reasonable size."""
+    if not file_path.exists():
+        return False
+    try:
+        size_mb = file_path.stat().st_size / (1024 * 1024)
+        return size_mb > min_size_mb
+    except:
+        return False
+
+
+def find_existing_export(out_dir: Path, base_stem: str, extensions: List[str] = ['.mp4', '.avi']) -> Optional[Path]:
+    """Find any existing export of this file (with or without counter suffix)."""
+    for ext in extensions:
+        # Check base name
+        base_path = out_dir / f"{base_stem}{ext}"
+        if is_valid_video_file(base_path):
+            return base_path
+
+        # Check numbered variants
+        for i in range(1, 100):  # Check up to _99
+            numbered_path = out_dir / f"{base_stem}_{i}{ext}"
+            if is_valid_video_file(numbered_path):
+                return numbered_path
+
+    return None
+
+
+def clean_invalid_exports(out_dir: Path, base_stem: str, debug: bool = False) -> int:
+    """Remove invalid/incomplete export files. Returns count of removed files."""
+    removed = 0
+    patterns = [f"{base_stem}.mp4", f"{base_stem}_*.mp4", f"{base_stem}.avi", f"{base_stem}_*.avi"]
+
+    for pattern in patterns:
+        for file in out_dir.glob(pattern):
+            if not is_valid_video_file(file):
+                try:
+                    file.unlink()
+                    removed += 1
+                    if debug:
+                        print(f"[CLEAN] Removed invalid file: {file.name} (size: {file.stat().st_size / 1024:.1f}KB)")
+                except Exception as e:
+                    if debug:
+                        print(f"[CLEAN] Could not remove {file}: {e}")
+
+    return removed
+
+
+def get_next_available_filename(out_dir: Path, base_stem: str, extension: str) -> Tuple[str, Path]:
+    """Get next available filename that doesn't exist."""
+    # First try without counter
+    exported_name = f"{base_stem}{extension}"
+    file_path = out_dir / exported_name
+
+    if not file_path.exists():
+        return exported_name, file_path
+
+    # Try with counter
+    counter = 1
+    while counter < 1000:  # Safety limit
+        exported_name = f"{base_stem}_{counter}{extension}"
+        file_path = out_dir / exported_name
+        if not file_path.exists():
+            return exported_name, file_path
+        counter += 1
+
+    raise ValueError(f"Could not find available filename for {base_stem} after 1000 attempts")
+
+
 def export_seq_once_streaming(
-    seq_path: Path,
-    out_dir: Path,
-    exported_name: str,
-    container: str,
-    simulate: bool,
-    spawn_console: bool = False,
-    timeout_secs: Optional[int] = None,
-    kill_after_error_lines: Optional[int] = None,
-    suppress_console_output: bool = True
+        seq_path: Path,
+        out_dir: Path,
+        exported_name: str,
+        container: str,
+        simulate: bool,
+        spawn_console: bool = False,
+        timeout_secs: Optional[int] = None,
+        kill_after_error_lines: Optional[int] = None,
+        suppress_console_output: bool = True
 ) -> Tuple[int, str]:
     """
     Run a single CLExport attempt while *stream-reading* its stdout.
@@ -95,7 +168,8 @@ def export_seq_once_streaming(
             while True:
                 ret = proc.poll()
                 if ret is not None:
-                    return (0, f"Exported successfully ({container})") if ret == 0 else (ret, f"CLExport failed with exit code {ret} ({container})")
+                    return (0, f"Exported successfully ({container})") if ret == 0 else (ret,
+                                                                                         f"CLExport failed with exit code {ret} ({container})")
                 if timeout_secs is not None and (time.time() - start) > timeout_secs:
                     try:
                         proc.kill()
@@ -110,7 +184,7 @@ def export_seq_once_streaming(
         proc = Popen(
             cmd,
             text=True,
-            bufsize=1,     # line-buffered
+            bufsize=1,  # line-buffered
             stdout=PIPE,
             stderr=STDOUT,
             creationflags=creationflags
@@ -138,7 +212,8 @@ def export_seq_once_streaming(
                 if proc.stdout:
                     for _ in proc.stdout:
                         pass
-                return (0, f"Exported successfully ({container})") if ret == 0 else (ret, f"CLExport failed with exit code {ret} ({container})")
+                return (0, f"Exported successfully ({container})") if ret == 0 else (ret,
+                                                                                     f"CLExport failed with exit code {ret} ({container})")
 
             if proc.stdout:
                 line = proc.stdout.readline()
@@ -208,12 +283,12 @@ def resolve_channel_label(seq_path: Path, channel_names: Dict[str, str]) -> str:
     parent_name = seq_path.parent.name if seq_path.parent else ""
 
     return (
-        channel_names.get(stem)
-        or channel_names.get(name)
-        or channel_names.get(full)
-        or channel_names.get(parent_name)
-        or parent_name
-        or stem
+            channel_names.get(stem)
+            or channel_names.get(name)
+            or channel_names.get(full)
+            or channel_names.get(parent_name)
+            or parent_name
+            or stem
     )
 
 
@@ -225,6 +300,7 @@ def dedupe_preserve_order(items: Iterable[str]) -> List[str]:
             seen.add(x)
             out.append(x)
     return out
+
 
 # =========================
 # Out dir computation (robust)
@@ -244,18 +320,19 @@ def compute_out_dir(seq_path: Path, out_root_path: Path) -> Path:
             break
 
     if anchor_idx is not None:
-        rel_from_data = Path(*parts[anchor_idx:])   # e.g., DATA_22-12-04/Case1/General_3/file.seq
+        rel_from_data = Path(*parts[anchor_idx:])  # e.g., DATA_22-12-04/Case1/General_3/file.seq
         out_dir = out_root_path / rel_from_data.parent
     else:
         channel = seq_path.parent.name if seq_path.parent else "ChannelUnknown"
-        case    = seq_path.parent.parent.name if seq_path.parent and seq_path.parent.parent else "CaseUnknown"
-        date    = seq_path.parent.parent.parent.name if seq_path.parent and seq_path.parent.parent and seq_path.parent.parent.parent else "DATA_Unknown"
+        case = seq_path.parent.parent.name if seq_path.parent and seq_path.parent.parent else "CaseUnknown"
+        date = seq_path.parent.parent.parent.name if seq_path.parent and seq_path.parent.parent and seq_path.parent.parent.parent else "DATA_Unknown"
         if not str(date).upper().startswith("DATA_"):
             date = "DATA_Unknown"
         out_dir = out_root_path / str(date) / str(case) / str(channel)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir
+
 
 # =========================
 # DB -> channel dir list
@@ -286,7 +363,9 @@ def query_channel_dirs_from_db(db_path: str,
 
         date, case_no = date_case.split("_", 1)
         # date: 'YYYY-MM-DD' -> 'DATA_YY-MM-DD'
-        yy = date[2:4]; mm = date[5:7]; dd = date[8:10]
+        yy = date[2:4];
+        mm = date[5:7];
+        dd = date[8:10]
         data_folder = f"DATA_{yy}-{mm}-{dd}"
         case_folder = f"Case{case_no}"
 
@@ -299,8 +378,9 @@ def query_channel_dirs_from_db(db_path: str,
 
     return dedupe_preserve_order(all_rel_dirs)
 
+
 # =========================
-# Full pipeline
+# Full pipeline with improved handling
 # =========================
 def run_pipeline(db_path: str,
                  table: str,
@@ -310,11 +390,23 @@ def run_pipeline(db_path: str,
                  only_value: int,
                  simulate: bool,
                  debug: bool,
-                 spawn_console: bool) -> None:
-
+                 spawn_console: bool,
+                 skip_existing: bool,
+                 clean_invalid: bool,
+                 fallback_avi: bool) -> None:
     seq_root_path = Path(seq_root).resolve()
     out_root_path = Path(out_root).resolve()
     out_root_path.mkdir(parents=True, exist_ok=True)
+
+    # Statistics
+    stats = {
+        'total': 0,
+        'skipped_existing': 0,
+        'success_mp4': 0,
+        'success_avi': 0,
+        'failed': 0,
+        'cleaned': 0
+    }
 
     # 1) Build relative channel dirs from DB rows
     rel_dirs = query_channel_dirs_from_db(
@@ -339,16 +431,21 @@ def run_pipeline(db_path: str,
     if debug:
         print(f"[DEBUG] Discovered .seq files to process: {len(seq_files)}")
 
-    # 4) Export loop (retries + fail-fast)
+    # 4) Export loop with improved handling
     log_path = out_root_path / "export_log.txt"
     total = len(seq_files)
+    stats['total'] = total
 
     with log_path.open('a', encoding='utf-8') as log_file:
+        log_file.write(f"\n{'=' * 60}\n")
+        log_file.write(f"Export session started: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        log_file.write(f"{'=' * 60}\n")
+
         for idx, seq_path in enumerate(seq_files, 1):
             try:
                 seq_path = seq_path.resolve()
                 if debug:
-                    print(f"[{idx}/{total}] START {seq_path}")
+                    print(f"\n[{idx}/{total}] START {seq_path}")
 
                 # Decide destination dir robustly (creates it if needed)
                 out_dir = compute_out_dir(seq_path, out_root_path)
@@ -357,36 +454,53 @@ def run_pipeline(db_path: str,
                 ch_label = resolve_channel_label(seq_path, channel_names)
                 base_stem = ch_label
 
-                # Target MP4 name (auto-suffix if exists)
-                exported_name = f"{base_stem}.mp4"
-                mp4_path = out_dir / exported_name
-                counter = 1
-                while mp4_path.exists() and not simulate:
-                    exported_name = f"{base_stem}_{counter}.mp4"
-                    mp4_path = out_dir / exported_name
-                    counter += 1
+                # Clean invalid files if requested
+                if clean_invalid:
+                    removed = clean_invalid_exports(out_dir, base_stem, debug)
+                    stats['cleaned'] += removed
+
+                # Check if valid export already exists
+                if skip_existing:
+                    existing = find_existing_export(out_dir, base_stem)
+                    if existing:
+                        status = "SKIPPED"
+                        reason = f"Valid export already exists: {existing.name}"
+                        stats['skipped_existing'] += 1
+
+                        if debug:
+                            print(f"[{idx}/{total}] {status}: {reason}")
+
+                        log_file.write(f"{seq_path} -> {existing}: {status} | {reason}\n")
+                        log_file.flush()
+                        continue
 
                 status, reason = "PENDING", ""
+                final_path = None
 
                 # Pre-checks
                 if not seq_path.exists():
                     status, reason = "FAILED", "File does not exist"
+                    stats['failed'] += 1
                 elif seq_path.stat().st_size == 0:
                     status, reason = "FAILED", "File is empty"
-                elif mp4_path.exists() and not simulate:
-                    status, reason = "SKIPPED", "Already exported"
+                    stats['failed'] += 1
 
                 # Attempt MP4 with retries
                 if status == "PENDING":
+                    # Get next available filename for MP4
+                    exported_name, mp4_path = get_next_available_filename(out_dir, base_stem, ".mp4")
+
                     if debug:
                         print(f"[{idx}/{total}] TRY MP4 -> {mp4_path}")
-                    for attempt in range(1, MAX_RETRIES + 1):
+
+                    for attempt in range(1, MAX_RETRIES_MP4 + 1):
                         if debug:
-                            print(f"[{idx}/{total}]  attempt {attempt}/{MAX_RETRIES}")
+                            print(f"[{idx}/{total}]  MP4 attempt {attempt}/{MAX_RETRIES_MP4}")
+
                         exitcode, reason = export_seq_once_streaming(
                             seq_path=seq_path,
                             out_dir=out_dir,
-                            exported_name=exported_name,
+                            exported_name=exported_name[:-4],  # Remove .mp4 extension
                             container="mp4",
                             simulate=simulate,
                             spawn_console=spawn_console,
@@ -394,13 +508,68 @@ def run_pipeline(db_path: str,
                             kill_after_error_lines=KILL_AFTER_ERROR_LINES,
                             suppress_console_output=SUPPRESS_CLEXPORT_OUTPUT
                         )
-                        if exitcode == 0:
-                            status = "EXPORTED SUCCESSFULLY"
+
+                        if exitcode == 0 and is_valid_video_file(mp4_path):
+                            status = "SUCCESS_MP4"
+                            stats['success_mp4'] += 1
+                            final_path = mp4_path
                             break
                         else:
-                            status = "FAILED"
-                            if debug:
-                                print(f"[FAIL MP4 {attempt}/{MAX_RETRIES}] {seq_path} -> {mp4_path} | {reason}")
+                            # Remove potentially invalid file
+                            if mp4_path.exists() and not is_valid_video_file(mp4_path):
+                                try:
+                                    mp4_path.unlink()
+                                    if debug:
+                                        print(f"[{idx}/{total}]  Removed invalid MP4 after attempt {attempt}")
+                                except:
+                                    pass
+
+                            if debug and attempt == MAX_RETRIES_MP4:
+                                print(f"[{idx}/{total}]  MP4 failed after {MAX_RETRIES_MP4} attempts")
+
+                # Fallback to AVI if MP4 failed and fallback is enabled
+                if status == "PENDING" and fallback_avi:
+                    # Get next available filename for AVI
+                    exported_name, avi_path = get_next_available_filename(out_dir, base_stem, ".avi")
+
+                    if debug:
+                        print(f"[{idx}/{total}] FALLBACK AVI -> {avi_path}")
+
+                    for attempt in range(1, MAX_RETRIES_AVI + 1):
+                        if debug:
+                            print(f"[{idx}/{total}]  AVI attempt {attempt}/{MAX_RETRIES_AVI}")
+
+                        exitcode, reason = export_seq_once_streaming(
+                            seq_path=seq_path,
+                            out_dir=out_dir,
+                            exported_name=exported_name[:-4],  # Remove .avi extension
+                            container="avi",
+                            simulate=simulate,
+                            spawn_console=spawn_console,
+                            timeout_secs=TIMEOUT_SECS * 2,  # Give AVI more time
+                            kill_after_error_lines=KILL_AFTER_ERROR_LINES * 2,  # More tolerant for AVI
+                            suppress_console_output=SUPPRESS_CLEXPORT_OUTPUT
+                        )
+
+                        if exitcode == 0 and is_valid_video_file(avi_path):
+                            status = "SUCCESS_AVI"
+                            stats['success_avi'] += 1
+                            final_path = avi_path
+                            break
+                        else:
+                            # Remove potentially invalid file
+                            if avi_path.exists() and not is_valid_video_file(avi_path):
+                                try:
+                                    avi_path.unlink()
+                                    if debug:
+                                        print(f"[{idx}/{total}]  Removed invalid AVI after attempt {attempt}")
+                                except:
+                                    pass
+
+                # Final status update
+                if status == "PENDING":
+                    status = "FAILED"
+                    stats['failed'] += 1
 
                 # Per-folder mapping + root log
                 try:
@@ -411,51 +580,102 @@ def run_pipeline(db_path: str,
                         print(f"[WARN] Could not write mapping file in {out_dir}: {e}")
 
                 try:
-                    log_file.write(f"{seq_path} -> {mp4_path}: {status} | {reason}\n")
+                    output_file = final_path if final_path else "None"
+                    log_file.write(f"{seq_path} -> {output_file}: {status} | {reason}\n")
+                    log_file.flush()
                 except Exception as e:
                     if debug:
                         print(f"[WARN] Could not write export_log: {e}")
 
                 if debug:
-                    print(f"[{status}] {seq_path} -> {mp4_path} | {reason}")
+                    print(f"[{idx}/{total}] [{status}] {seq_path} -> {final_path if final_path else 'FAILED'}")
 
             except Exception as e:
                 if debug:
                     print(f"[{idx}/{total}] [HARD-FAIL] {seq_path} | {e}. Skipping.")
-                # continue to next file no matter what
+                stats['failed'] += 1
                 continue
 
+    # Print summary
+    print("\n" + "=" * 60)
+    print("EXPORT SUMMARY")
+    print("=" * 60)
+    print(f"Total files:       {stats['total']}")
+    print(f"Skipped existing:  {stats['skipped_existing']}")
+    print(f"Success (MP4):     {stats['success_mp4']}")
+    print(f"Success (AVI):     {stats['success_avi']}")
+    print(f"Failed:            {stats['failed']}")
+    print(f"Cleaned invalid:   {stats['cleaned']}")
+    print("=" * 60)
+
 
 # =========================
-# Fill your paths here 👇
+# Main entry point
 # =========================
 if __name__ == "__main__":
-    # ==== EDIT THESE ====
+    parser = argparse.ArgumentParser(description="Export .seq files to MP4/AVI using CLExport")
+
+    # Required arguments
+    parser.add_argument("--db", required=True, help="Path to SQLite database")
+    parser.add_argument("--seq-root", required=True, help="Root directory containing sequence files")
+    parser.add_argument("--out-root", required=True, help="Output root directory")
+
+    # Optional arguments
+    parser.add_argument("--table", default="seq_status", help="Database table name (default: seq_status)")
+    parser.add_argument("--only-value", type=int, default=1, help="Export channels with this value (default: 1)")
+    parser.add_argument("--skip-existing", action="store_true", help="Skip if valid export already exists")
+    parser.add_argument("--clean-invalid", action="store_true",
+                        help="Remove invalid/incomplete exports before processing")
+    parser.add_argument("--fallback-avi", action="store_true", help="Try AVI export if MP4 fails")
+    parser.add_argument("--simulate", action="store_true", help="Simulate export without actual conversion")
+    parser.add_argument("--debug", action="store_true", help="Enable debug output")
+    parser.add_argument("--spawn-console", action="store_true", help="Spawn console window for each export")
+
+    args = parser.parse_args()
+
+    # You can also hardcode values here if you prefer
+    # Uncomment the following to use hardcoded values instead of command line:
+    """
     DB_PATH   = r"F:\Room_8_Data\Scalpel_Raz\ScalpelDatabase.sqlite"
-    SEQ_ROOT  = r"F:\Room_8_Data\Sequence_Backup"   # where DATA_yy-mm-dd\CaseN\Channel live
-    OUT_ROOT  = r"F:\Room_8_Data\Recordings"        # where you want mirrored outputs
+    SEQ_ROOT  = r"F:\Room_8_Data\Sequence_Backup"
+    OUT_ROOT  = r"F:\Room_8_Data\Recordings"
     TABLE     = "seq_status"
-
-    # Optional mapping for output names (leave {} to use Channel folder name)
-    CHANNEL_NAMES: Dict[str, str] = {
-        # "General_3": "General_3",
-        # "Cart_RT_1": "Cart_RT_1",
-    }
-
-    # Options
-    ONLY_VALUE    = 1       # export channels where flag == 1 (change to 3 if needed)
-    SIMULATE      = False   # False = actually convert with CLExport
-    DEBUG         = True    # verbose prints
-    SPAWN_CONSOLE = False   # True = open a console per export (Windows)
+    ONLY_VALUE = 1
+    SKIP_EXISTING = True    # Skip files that already exist
+    CLEAN_INVALID = True    # Clean up invalid files
+    FALLBACK_AVI = True     # Try AVI if MP4 fails
+    SIMULATE = False
+    DEBUG = True
+    SPAWN_CONSOLE = False
 
     run_pipeline(
         db_path=DB_PATH,
         table=TABLE,
         seq_root=SEQ_ROOT,
         out_root=OUT_ROOT,
-        channel_names=CHANNEL_NAMES,
+        channel_names={},
         only_value=ONLY_VALUE,
         simulate=SIMULATE,
         debug=DEBUG,
-        spawn_console=SPAWN_CONSOLE
+        spawn_console=SPAWN_CONSOLE,
+        skip_existing=SKIP_EXISTING,
+        clean_invalid=CLEAN_INVALID,
+        fallback_avi=FALLBACK_AVI
+    )
+    """
+
+    # Use command line arguments
+    run_pipeline(
+        db_path=args.db,
+        table=args.table,
+        seq_root=args.seq_root,
+        out_root=args.out_root,
+        channel_names={},
+        only_value=args.only_value,
+        simulate=args.simulate,
+        debug=args.debug,
+        spawn_console=args.spawn_console,
+        skip_existing=args.skip_existing,
+        clean_invalid=args.clean_invalid,
+        fallback_avi=args.fallback_avi
     )
