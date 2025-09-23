@@ -13,8 +13,14 @@ Status meanings:
 import argparse
 import sqlite3
 from collections import Counter
+import os
 
-DEFAULT_DB_PATH = r"F:\Room_8_Data\Scalpel_Raz\ScalpelDatabase.sqlite"
+# Get the directory where this script is located
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Default DB path inside the project directory
+DEFAULT_DB_PATH = os.path.join(BASE_DIR, "ScalpelDatabase.sqlite")
+
 CAMERAS = [
     "Cart_Center_2","Cart_LT_4","Cart_RT_1",
     "General_3","Monitor","Patient_Monitor",

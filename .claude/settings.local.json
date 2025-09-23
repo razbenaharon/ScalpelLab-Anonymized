@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(where python)",
+      "Bash(py app.py)",
+      "Bash(pip install:*)",
+      "Bash(py -m pip install:*)",
+      "Bash(conda install:*)",
+      "Bash(conda:*)",
+      "Bash(py -m streamlit run:*)",
+      "Bash(dir)",
+      "Bash(dir pages)",
+      "Bash(py generate_erd.py:*)",
+      "Bash(dir:*)",
+      "Bash(py:*)",
+      "Bash(move generate_erd.py scripts/visualization/)",
+      "Bash(move sqlite_to_dbdiagram.py scripts/export/)",
+      "Bash(move status_statistics.py scripts/database/)",
+      "Bash(move seq_exporter.py scripts/export/)",
+      "Bash(move mp4_status_update.py scripts/database/)",
+      "Bash(move dedupe_exports.py scripts/database/)",
+      "Bash(move sql_to_path.py scripts/database/)",
+      "Bash(copy generate_erd.py scripts\\visualization\\ )",
+      "Bash(copy sqlite_to_dbdiagram.py scripts\\export\\ )",
+      "Bash(copy status_statistics.py scripts\\database\\ )",
+      "Bash(copy seq_exporter.py scripts\\export\\ )",
+      "Bash(copy mp4_status_update.py scripts\\database\\ )",
+      "Bash(copy dedupe_exports.py scripts\\database\\ )",
+      "Bash(copy sql_to_path.py scripts\\database\\)",
+      "Bash(tasklist:*)",
+      "Bash(del check_anesthetic.py)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

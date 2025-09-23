@@ -1,0 +1,69 @@
+//// ScalpelLab Database, exported 2025-09-23
+//// Paste into https://dbdiagram.io
+
+//// System table from SQLite. Usually not modeled, included here for completeness.
+Table sqlite_sequence {
+  name varchar
+  seq  varchar
+  Note: 'SQLite internal autoincrement tracking table'
+}
+
+Table analysis_information {
+  date_case          varchar [pk]
+  labeled            int     // 0 or 1
+  label_by           varchar
+  Note: 'Per case labeling metadata'
+}
+
+Table anesthetic {
+  intern_key         int [pk]
+  name               varchar [not null]
+  code               varchar
+  res_start_date     varchar
+  grade_a_date       varchar  // merged column
+  Note: 'Resident roster'
+}
+
+Table recording_details {
+  recording_date     varchar
+  signature_time     varchar
+  case_no            int
+  date_case          varchar [pk, unique]
+  code               varchar
+  anesthetic_key     int
+  Note: 'Authoritative case list, parent for case scoped tables'
+}
+
+Table mp4_status {
+  date_case          varchar [pk]
+  Cart_Center_2      int
+  Cart_LT_4          int
+  Cart_RT_1          int
+  General_3          int
+  Monitor            int
+  Patient_Monitor    int
+  Ventilator_Monitor int
+  Injection_Port     int
+  comments           varchar
+  Note: 'MP4 export status per camera, 1..n semantics driven by your app'
+}
+
+Table seq_status {
+  date_case          varchar [pk] // FK to recording_details.date_case
+  Cart_Center_2      int [default: 0]
+  Cart_LT_4          int [default: 0]
+  Cart_RT_1          int [default: 0]
+  General_3          int [default: 0]
+  Monitor            int [default: 0]
+  Patient_Monitor    int [default: 0]
+  Ventilator_Monitor int [default: 0]
+  Injection_Port     int [default: 0]
+  comments           varchar
+  Note: 'SEQ ingestion status per camera, values are non negative. 1 more than 200MB, 2 under 200MB, 3 missing, 4 format problem'
+}
+
+// Relationships detected from database:
+Ref: recording_details.date_case > seq_status.date_case
+Ref: recording_details.date_case > mp4_status.date_case
+Ref: recording_details.date_case > analysis_information.date_case
+Ref: anesthetic.intern_key > recording_details.anesthetic_key

@@ -81,10 +81,6 @@ def section(title: str, table_name: str, labels: dict, order: tuple[int, ...]):
                                aggfunc="sum", fill_value=0)
         st.dataframe(pivot, width="stretch")
 
-        fig = px.bar(df, x="camera", y="count", color="status_label", barmode="stack",
-                     title=f"Per-camera status distribution ({table_name})")
-        st.plotly_chart(fig, width="stretch")
-
         totals = df.groupby("status_label")["count"].sum().reset_index()
         st.markdown("**Totals across all cameras:**")
         st.dataframe(totals, width="stretch", hide_index=True)

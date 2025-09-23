@@ -1,15 +1,51 @@
 import os
+import sys
 import streamlit as st
+import fitz  # PyMuPDF
+from PIL import Image
+import io
+
+# Import path manager
+sys.path.append(os.path.join(os.path.dirname(__file__)))
+from config.paths import paths
 
 st.set_page_config(page_title="ScalpelLab DB", layout="wide")
 
 st.title("ScalpelLab – SQLite Admin & Dashboards")
 
 st.sidebar.header("Database")
-DEFAULT_DB = os.environ.get("SCALPEL_DB", os.path.abspath("ScalpelDatabase.sqlite"))
+DEFAULT_DB = os.environ.get("SCALPEL_DB", str(paths.DATABASE_FILE))
 db_path = st.sidebar.text_input("SQLite DB Path", value=DEFAULT_DB)
 
 # make DB path available to all pages
 st.session_state["db_path"] = db_path
 
 st.sidebar.markdown("Navigate using the left sidebar menu (pages).")
+
+# Display ERD PDF on main page
+st.markdown("---")
+st.subheader("Database Schema Overview")
+
+# Check if ERD.pdf exists
+erd_pdf_path = str(paths.ERD_PDF)
+if os.path.exists(erd_pdf_path):
+    try:
+        # Open PDF and get first page
+        pdf_document = fitz.open(erd_pdf_path)
+        first_page = pdf_document[0]
+
+        # Convert page to image
+        pix = first_page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom for better quality
+        img_data = pix.tobytes("png")
+
+        # Convert to PIL Image and display
+        image = Image.open(io.BytesIO(img_data))
+        st.image(image, caption="ScalpelLab Database Entity Relationship Diagram", use_container_width=True)
+
+        pdf_document.close()
+
+    except Exception as e:
+        st.error(f"Error loading ERD.pdf: {e}")
+        st.info("Please make sure ERD.pdf is in the project directory.")
+else:
+    st.info("ERD.pdf not found. Please add your database ERD to display it here.")
