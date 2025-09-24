@@ -1,4 +1,4 @@
-//// ScalpelLab Database, exported 2025-09-23
+//// ScalpelLab Database, exported 2025-09-24
 //// Paste into https://dbdiagram.io
 
 //// System table from SQLite. Usually not modeled, included here for completeness.
@@ -9,8 +9,8 @@ Table sqlite_sequence {
 }
 
 Table analysis_information {
-  date_case          varchar [pk]
-  labeled            int     // 0 or 1
+  recording_date     varchar [pk]
+  case_no            int [pk]
   label_by           varchar
   Note: 'Per case labeling metadata'
 }
@@ -21,16 +21,13 @@ Table anesthetic {
   code               varchar
   anesthetic_start_date varchar
   grade_a_date       varchar  // merged column
-  seniority_month    int
-  anesthetic_attending_today varchar
   Note: 'Resident roster'
 }
 
 Table recording_details {
-  recording_date     varchar
+  recording_date     varchar [pk]
   signature_time     varchar
-  case_no            int
-  date_case          varchar [pk, unique]
+  case_no            int [pk]
   code               varchar
   anesthetic_key     int
   months_anesthetic_recording int
@@ -39,7 +36,8 @@ Table recording_details {
 }
 
 Table mp4_status {
-  date_case          varchar [pk]
+  recording_date     varchar [pk]
+  case_no            int [pk]
   Cart_Center_2      int
   Cart_LT_4          int
   Cart_RT_1          int
@@ -53,21 +51,21 @@ Table mp4_status {
 }
 
 Table seq_status {
-  date_case          varchar [pk] // FK to recording_details.date_case
-  Cart_Center_2      int [default: 0]
-  Cart_LT_4          int [default: 0]
-  Cart_RT_1          int [default: 0]
-  General_3          int [default: 0]
-  Monitor            int [default: 0]
-  Patient_Monitor    int [default: 0]
-  Ventilator_Monitor int [default: 0]
-  Injection_Port     int [default: 0]
+  recording_date     varchar [pk]
+  case_no            int [pk]
+  Cart_Center_2      int
+  Cart_LT_4          int
+  Cart_RT_1          int
+  General_3          int
+  Monitor            int
+  Patient_Monitor    int
+  Ventilator_Monitor int
+  Injection_Port     int
   comments           varchar
   Note: 'SEQ ingestion status per camera, values are non negative. 1 more than 200MB, 2 under 200MB, 3 missing, 4 format problem'
 }
 
 // Relationships detected from database:
-Ref: recording_details.date_case > seq_status.date_case
-Ref: recording_details.date_case > mp4_status.date_case
-Ref: recording_details.date_case > analysis_information.date_case
-Ref: anesthetic.anesthetic_key > recording_details.anesthetic_key
+Ref: recording_details.recording_date > analysis_information.recording_date
+Ref: recording_details.recording_date > analysis_information.case_no
+Ref: recording_details.anesthetic_key > anesthetic.anesthetic_key

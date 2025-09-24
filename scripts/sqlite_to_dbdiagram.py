@@ -205,12 +205,9 @@ def sqlite_to_dbdiagram(db_path: str, output_path: str):
     print("4. Your database diagram will be generated automatically!")
 
 def main():
-    # Import path manager
-    sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-    from config.paths import paths
-
-    db_path = str(paths.DATABASE_FILE)
-    output_path = str(paths.DBDIAGRAM_OUTPUT)
+    # Define paths directly
+    db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ScalpelDatabase.sqlite")
+    output_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "docs", "scalpel_dbdiagram.txt")
 
     print(f"Converting database: {db_path}")
     print(f"Output file: {output_path}")
