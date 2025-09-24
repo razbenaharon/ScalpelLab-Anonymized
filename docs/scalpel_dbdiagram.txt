@@ -16,11 +16,13 @@ Table analysis_information {
 }
 
 Table anesthetic {
-  intern_key         int [pk]
+  anesthetic_key     int [pk]
   name               varchar [not null]
   code               varchar
-  res_start_date     varchar
+  anesthetic_start_date varchar
   grade_a_date       varchar  // merged column
+  seniority_month    int
+  anesthetic_attending_today varchar
   Note: 'Resident roster'
 }
 
@@ -31,6 +33,8 @@ Table recording_details {
   date_case          varchar [pk, unique]
   code               varchar
   anesthetic_key     int
+  months_anesthetic_recording int
+  anesthetic_attending varchar
   Note: 'Authoritative case list, parent for case scoped tables'
 }
 
@@ -66,4 +70,4 @@ Table seq_status {
 Ref: recording_details.date_case > seq_status.date_case
 Ref: recording_details.date_case > mp4_status.date_case
 Ref: recording_details.date_case > analysis_information.date_case
-Ref: anesthetic.intern_key > recording_details.anesthetic_key
+Ref: anesthetic.anesthetic_key > recording_details.anesthetic_key

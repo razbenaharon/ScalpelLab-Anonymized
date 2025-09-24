@@ -30,7 +30,9 @@
       "Bash(copy dedupe_exports.py scripts\\database\\ )",
       "Bash(copy sql_to_path.py scripts\\database\\)",
       "Bash(tasklist:*)",
-      "Bash(del check_anesthetic.py)"
+      "Bash(del check_anesthetic.py)",
+      "Bash(streamlit run:*)",
+      "Bash(del configpaths.py)"
     ],
     "deny": [],
     "ask": []

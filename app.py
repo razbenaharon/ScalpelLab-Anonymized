@@ -5,16 +5,32 @@ import fitz  # PyMuPDF
 from PIL import Image
 import io
 
+
+#streamlit run app.py
+
 # Import path manager
 sys.path.append(os.path.join(os.path.dirname(__file__)))
-from config.paths import paths
 
 st.set_page_config(page_title="ScalpelLab DB", layout="wide")
 
-st.title("ScalpelLab – SQLite Admin & Dashboards")
+st.title("ScalpelLab – Streamlit SQLite Database Manager")
+
+# Project overview section
+st.markdown("""
+
+### 🛠 **Available Tools**
+- **Browse**: Query and explore database records 
+- **Edit**: Modify database records through forms
+- **Status Summary**: View processing statistics and summaries
+- **Scripts**: Run automated data processing and export scripts
+
+Navigate using the sidebar to access different features and tools.
+""")
+
+st.markdown("---")
 
 st.sidebar.header("Database")
-DEFAULT_DB = os.environ.get("SCALPEL_DB", str(paths.DATABASE_FILE))
+DEFAULT_DB = os.environ.get("SCALPEL_DB", os.path.join(os.path.dirname(__file__), "ScalpelDatabase.sqlite"))
 db_path = st.sidebar.text_input("SQLite DB Path", value=DEFAULT_DB)
 
 # make DB path available to all pages
@@ -27,7 +43,7 @@ st.markdown("---")
 st.subheader("Database Schema Overview")
 
 # Check if ERD.pdf exists
-erd_pdf_path = str(paths.ERD_PDF)
+erd_pdf_path = os.path.join(os.path.dirname(__file__), "docs", "ERD.pdf")
 if os.path.exists(erd_pdf_path):
     try:
         # Open PDF and get first page
@@ -40,7 +56,7 @@ if os.path.exists(erd_pdf_path):
 
         # Convert to PIL Image and display
         image = Image.open(io.BytesIO(img_data))
-        st.image(image, caption="ScalpelLab Database Entity Relationship Diagram", use_container_width=True)
+        st.image(image, caption="ScalpelLab Database Entity Relationship Diagram", width='stretch')
 
         pdf_document.close()
 

@@ -42,7 +42,7 @@ else:
         for col in cols_meta:
             name = col["name"]
             # skip common generated column patterns (adjust if needed)
-            if name.lower() in {"date_case"}:
+            if name.lower() in {"date_case", "months_anesthetic_recording", "anesthetic_attending"}:
                 continue
 
             # For anesthetic table, skip anesthetic_key input as it's auto-generated
@@ -54,6 +54,21 @@ else:
             if "DATE" in ctype or name.endswith("_date") or name == "date":
                 d = st.date_input(name)
                 input_values[name] = d.strftime("%Y-%m-%d") if d else None
+            elif "TIME" in ctype or name.endswith("_time") or "time" in name.lower():
+                if "signature" in name.lower():
+                    # For signature_time, we need both date and time
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        d = st.date_input(f"{name} (date)")
+                    with col2:
+                        t = st.time_input(f"{name} (time)")
+                    if d and t:
+                        input_values[name] = f"{d.strftime('%Y-%m-%d')} {t.strftime('%H:%M:%S')}"
+                    else:
+                        input_values[name] = None
+                else:
+                    t = st.time_input(name)
+                    input_values[name] = t.strftime("%H:%M:%S") if t else None
             elif "INT" in ctype:
                 input_values[name] = st.number_input(name, step=1)
             elif "REAL" in ctype or "FLOA" in ctype or "DOUB" in ctype:

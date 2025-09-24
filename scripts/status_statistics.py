@@ -18,8 +18,8 @@ import os
 # Get the directory where this script is located
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Default DB path inside the project directory
-DEFAULT_DB_PATH = os.path.join(BASE_DIR, "ScalpelDatabase.sqlite")
+# Default DB path in the parent directory
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(BASE_DIR), "ScalpelDatabase.sqlite")
 
 CAMERAS = [
     "Cart_Center_2","Cart_LT_4","Cart_RT_1",

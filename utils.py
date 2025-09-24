@@ -23,6 +23,17 @@ def list_tables(db_path: str):
         """)
         return [r[0] for r in cur.fetchall()]
 
+def list_views(db_path: str):
+    """Return all view names in the database."""
+    with connect(db_path) as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT name FROM sqlite_master
+            WHERE type='view'
+            ORDER BY name;
+        """)
+        return [r[0] for r in cur.fetchall()]
+
 def get_table_schema(db_path: str, table: str):
     """Return PRAGMA schema info for a table (columns, types, etc)."""
     with connect(db_path) as conn:

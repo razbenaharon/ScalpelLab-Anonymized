@@ -1,4 +1,4 @@
-from sql_to_path import get_paths
+from scripts.sql_to_path import get_paths
 
 sql_query = """
     SELECT date_case, Monitor, Patient_Monitor

@@ -614,7 +614,7 @@ def run_pipeline(db_path: str,
 # =========================
 if __name__ == "__main__":
     # Hard-coded defaults – just hit Run in PyCharm
-    DB_PATH = r"F:\Room_8_Data\Scalpel_Raz\ScalpelDatabase.sqlite"
+    DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ScalpelDatabase.sqlite")
     SEQ_ROOT = r"F:\Room_8_Data\Sequence_Backup"
     OUT_ROOT = r"F:\Room_8_Data\Recordings"
     TABLE = "seq_status"

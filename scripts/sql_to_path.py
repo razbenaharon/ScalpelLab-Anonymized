@@ -25,13 +25,14 @@ Notes:
 
 import argparse
 import csv
+import os
 import re
 import sqlite3
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
 # ------------ Defaults (edit if needed) ------------
-DEFAULT_DB_PATH = r"F:\Room_8_Data\Scalpel_Raz\ScalpelDatabase.sqlite"
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ScalpelDatabase.sqlite")
 DEFAULT_ROOT    = r"F:\Room_8_Data\Recordings"
 
 # All known camera columns (the script will only use the subset actually returned by your SQL)
