@@ -1,4 +1,4 @@
-//// ScalpelLab Database, exported 2025-09-24
+//// ScalpelLab Database, exported 2025-09-25
 //// Paste into https://dbdiagram.io
 
 //// System table from SQLite. Usually not modeled, included here for completeness.
@@ -51,8 +51,8 @@ Table mp4_status {
 }
 
 Table seq_status {
-  recording_date     varchar [pk]
-  case_no            int [pk]
+  recording_date     varchar [pk] // Part of FK to recording_details
+  case_no            int [pk] // Part of FK to recording_details
   Cart_Center_2      int
   Cart_LT_4          int
   Cart_RT_1          int
@@ -66,6 +66,10 @@ Table seq_status {
 }
 
 // Relationships detected from database:
-Ref: recording_details.recording_date > analysis_information.recording_date
-Ref: recording_details.recording_date > analysis_information.case_no
 Ref: recording_details.anesthetic_key > anesthetic.anesthetic_key
+Ref: seq_status.case_no > recording_details.case_no
+Ref: seq_status.recording_date > recording_details.recording_date
+Ref: mp4_status.case_no > recording_details.case_no
+Ref: mp4_status.recording_date > recording_details.recording_date
+Ref: analysis_information.case_no > recording_details.case_no
+Ref: analysis_information.recording_date > recording_details.recording_date

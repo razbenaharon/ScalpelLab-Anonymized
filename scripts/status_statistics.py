@@ -94,7 +94,7 @@ def main():
         # mp4 table
         try:
             total_rows, mp4_stats = fetch_camera_stats(conn, args.mp4_table, CAMERAS)
-            print(f"[INFO] Total date_case rows in {args.mp4_table}: {total_rows}")
+            print(f"[INFO] Total rows in {args.mp4_table}: {total_rows}")
             print_table(
                 title=f"Per-camera status distribution ({args.mp4_table})",
                 camera_stats=mp4_stats,
@@ -107,7 +107,7 @@ def main():
         # seq table
         try:
             total_rows, seq_stats = fetch_camera_stats(conn, args.seq_table, CAMERAS)
-            print(f"\n[INFO] Total date_case rows in {args.seq_table}: {total_rows}")
+            print(f"\n[INFO] Total rows in {args.seq_table}: {total_rows}")
             print_table(
                 title=f"Per-camera status distribution ({args.seq_table})",
                 camera_stats=seq_stats,

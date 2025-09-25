@@ -343,29 +343,28 @@ def query_channel_dirs_from_db(db_path: str,
                                only_value: int = 1,
                                debug: bool = False) -> List[str]:
     """
-    Reads rows from `table` (expects columns: date_case + camera flags),
+    Reads rows from `table` (expects columns: recording_date, case_no + camera flags),
     returns a list of relative channel dirs like 'DATA_22-12-04\\Case1\\General_3'
     for all cameras where flag == only_value.
     """
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cols = ", ".join(cameras)
-    rows = cur.execute(f"SELECT date_case, {cols} FROM {table}").fetchall()
+    rows = cur.execute(f"SELECT recording_date, case_no, {cols} FROM {table}").fetchall()
     conn.close()
 
     all_rel_dirs: List[str] = []
     for row in rows:
-        date_case, *vals = row
-        if not isinstance(date_case, str) or "_" not in date_case:
+        recording_date, case_no, *vals = row
+        if not isinstance(recording_date, str) or not isinstance(case_no, int):
             if debug:
-                print(f"[WARN] Bad date_case format: {date_case}")
+                print(f"[WARN] Bad recording_date/case_no format: {recording_date}, {case_no}")
             continue
 
-        date, case_no = date_case.split("_", 1)
-        # date: 'YYYY-MM-DD' -> 'DATA_YY-MM-DD'
-        yy = date[2:4];
-        mm = date[5:7];
-        dd = date[8:10]
+        # recording_date: 'YYYY-MM-DD' -> 'DATA_YY-MM-DD'
+        yy = recording_date[2:4];
+        mm = recording_date[5:7];
+        dd = recording_date[8:10]
         data_folder = f"DATA_{yy}-{mm}-{dd}"
         case_folder = f"Case{case_no}"
 

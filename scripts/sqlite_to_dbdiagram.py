@@ -141,8 +141,7 @@ def sqlite_to_dbdiagram(db_path: str, output_path: str):
             constraints = []
             if is_pk:
                 constraints.append("pk")
-                if table == 'recording_details' and col_name == 'date_case':
-                    constraints.append("unique")
+                # No specific unique constraints needed for composite primary key
             if not_null and not is_pk:
                 constraints.append("not null")
             if default_val is not None and table == 'seq_status':
@@ -158,8 +157,8 @@ def sqlite_to_dbdiagram(db_path: str, output_path: str):
                 col_def += "  // merged column"
             elif table in ['mp4_status', 'seq_status'] and col_name == 'intern_key':
                 col_def += "      // FK to anesthetic.intern_key"
-            elif table == 'seq_status' and col_name == 'date_case':
-                col_def += " // FK to recording_details.date_case"
+            elif table == 'seq_status' and col_name in ['recording_date', 'case_no']:
+                col_def += " // Part of FK to recording_details"
 
             output_lines.append(col_def)
 

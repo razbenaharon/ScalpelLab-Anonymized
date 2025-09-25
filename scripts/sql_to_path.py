@@ -4,18 +4,19 @@
 Execute a FULL SQL query against your status table and output matching MP4 file paths.
 
 Your SQL must SELECT at least:
-  - date_case
+  - recording_date
+  - case_no
   - One or more camera columns with status values (1/2/3[/4])
 
 Examples (PowerShell):
   # 1) Inline SQL
-  python sql_to_path.py --sql "SELECT date_case, Monitor, Patient_Monitor FROM mp4_status WHERE Monitor=1"
+  python sql_to_path.py --sql "SELECT recording_date, case_no, Monitor, Patient_Monitor FROM mp4_status WHERE Monitor=1"
 
   # 2) SQL from file
   python sql_to_path.py --sql-file "F:\\Room_8_Data\\Scalpel_Raz\\queries\\monitor_good.sql"
 
   # Restrict to specific cameras and keep only the largest file
-  python sql_to_path.py --sql "SELECT date_case, Monitor, General_3 FROM mp4_status WHERE Monitor=1" ^
+  python sql_to_path.py --sql "SELECT recording_date, case_no, Monitor, General_3 FROM mp4_status WHERE Monitor=1" ^
                         --only-cameras Monitor,General_3 --largest-only --save-csv "F:\\good_paths.csv"
 
 Notes:
@@ -56,19 +57,19 @@ def read_sql_from_args(args: argparse.Namespace) -> str:
     return args.sql
 
 
-def data_dir_from_date_case(date_case: str) -> Tuple[str, str]:
-    """'2023-02-05_1' -> ('DATA_23-02-05', 'Case1')."""
-    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})_(\d+)", date_case)
+def data_dir_from_recording_date_and_case(recording_date: str, case_no: int) -> Tuple[str, str]:
+    """'2023-02-05', 1 -> ('DATA_23-02-05', 'Case1')."""
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", recording_date)
     if not m:
-        raise ValueError(f"Bad date_case format: {date_case}")
-    yyyy, mm, dd, case = m.groups()
+        raise ValueError(f"Bad recording_date format: {recording_date}")
+    yyyy, mm, dd = m.groups()
     yy = yyyy[2:]
-    return f"DATA_{yy}-{mm}-{dd}", f"Case{case}"
+    return f"DATA_{yy}-{mm}-{dd}", f"Case{case_no}"
 
 
-def list_mp4s_for_camera(root: Path, date_case: str, camera: str) -> List[Path]:
+def list_mp4s_for_camera(root: Path, recording_date: str, case_no: int, camera: str) -> List[Path]:
     """Return list of *.mp4 under <root>/DATA_YY-MM-DD/CaseN/<camera>/ recursively."""
-    data_dir, case_dir = data_dir_from_date_case(date_case)
+    data_dir, case_dir = data_dir_from_recording_date_and_case(recording_date, case_no)
     cam_dir = root / data_dir / case_dir / camera
     if not cam_dir.exists():
         return []
@@ -105,15 +106,15 @@ def get_paths(sql_query: str,
               root_path: str = DEFAULT_ROOT,
               status_value: int = 1,
               largest_only: bool = False,
-              only_cameras: list[str] | None = None) -> list[tuple[str, str, str, float]]:
+              only_cameras: list[str] | None = None) -> list[tuple[str, int, str, str, float]]:
     """
-    Run SQL query and return list of (date_case, camera, mp4_path, size_mb).
+    Run SQL query and return list of (recording_date, case_no, camera, mp4_path, size_mb).
     """
     root = Path(root_path)
     conn = sqlite3.connect(db_path)
     try:
         colnames, rows = run_sql(conn, sql_query)
-        if not rows or "date_case" not in colnames:
+        if not rows or "recording_date" not in colnames or "case_no" not in colnames:
             return []
 
         returned_cameras = [c for c in CAMERAS if c in colnames]
@@ -123,20 +124,34 @@ def get_paths(sql_query: str,
         out_rows = []
         for row in rows:
             row_map = dict(zip(colnames, row))
-            dc = row_map["date_case"]
+            recording_date = row_map["recording_date"]
+            case_no = row_map["case_no"]
             for cam in returned_cameras:
                 st = row_map.get(cam)
                 if int(st or 0) != status_value:
                     continue
-                mp4s = list_mp4s_for_camera(root, dc, cam)
-                if largest_only:
-                    mp4s = pick_largest(mp4s)
-                for p in mp4s:
-                    try:
-                        size_mb = round(p.stat().st_size / (1024 * 1024), 2)
-                    except OSError:
-                        size_mb = -1.0
-                    out_rows.append((dc, cam, str(p), size_mb))
+
+                # Generate expected path whether files exist or not
+                data_dir, case_dir = data_dir_from_recording_date_and_case(recording_date, case_no)
+                expected_path = root / data_dir / case_dir / cam
+
+                # Try to find actual files
+                mp4s = list_mp4s_for_camera(root, recording_date, case_no, cam)
+
+                if mp4s:
+                    # Files exist - process them
+                    if largest_only:
+                        mp4s = pick_largest(mp4s)
+                    for p in mp4s:
+                        try:
+                            size_mb = round(p.stat().st_size / (1024 * 1024), 2)
+                        except OSError:
+                            size_mb = -1.0
+                        out_rows.append((recording_date, case_no, cam, str(p), size_mb))
+                else:
+                    # Files don't exist - return expected path
+                    expected_file_path = expected_path / "*.mp4"
+                    out_rows.append((recording_date, case_no, cam, str(expected_file_path), 0.0))
         return out_rows
     finally:
         conn.close()
@@ -151,7 +166,7 @@ def main():
     group.add_argument("--sql-file", default="", help="Path to a .sql file containing the full query.")
     ap.add_argument("--only-cameras", default="", help="Comma-separated list to restrict cameras.")
     ap.add_argument("--status-value", type=int, default=1, help="Which status value to match (default: 1).")
-    ap.add_argument("--largest-only", action="store_true", help="Return only the largest MP4 per (date_case,camera).")
+    ap.add_argument("--largest-only", action="store_true", help="Return only the largest MP4 per (recording_date,case_no,camera).")
     ap.add_argument("--save-csv", default="", help="Optional CSV output path.")
     args = ap.parse_args()
 
@@ -167,8 +182,8 @@ def main():
         if not rows:
             print("[INFO] Query returned no rows.")
             return
-        if "date_case" not in colnames:
-            raise SystemExit("[ERROR] SQL must SELECT 'date_case'.")
+        if "recording_date" not in colnames or "case_no" not in colnames:
+            raise SystemExit("[ERROR] SQL must SELECT 'recording_date' and 'case_no'.")
 
         # Cameras actually present in the SQL result:
         returned_cameras = [c for c in CAMERAS if c in colnames]
@@ -186,12 +201,13 @@ def main():
         else:
             cameras_to_check = returned_cameras
 
-        out_rows: List[Tuple[str, str, str, float]] = []  # (date_case, camera, path_str, size_mb)
+        out_rows: List[Tuple[str, int, str, str, float]] = []  # (recording_date, case_no, camera, path_str, size_mb)
 
         # Iterate rows and emit paths for cameras whose status equals --status-value
         for row in rows:
             row_map = dict(zip(colnames, row))
-            dc = row_map["date_case"]
+            recording_date = row_map["recording_date"]
+            case_no = row_map["case_no"]
 
             for cam in cameras_to_check:
                 st = row_map.get(cam)
@@ -202,7 +218,7 @@ def main():
                 if st_int != args.status_value:
                     continue
 
-                mp4s = list_mp4s_for_camera(root, dc, cam)
+                mp4s = list_mp4s_for_camera(root, recording_date, case_no, cam)
                 if args.largest_only:
                     mp4s = pick_largest(mp4s)
 
@@ -211,14 +227,14 @@ def main():
                         size_mb = round(p.stat().st_size / (1024 * 1024), 2)
                     except OSError:
                         size_mb = -1.0
-                    out_rows.append((dc, cam, str(p), size_mb))
+                    out_rows.append((recording_date, case_no, cam, str(p), size_mb))
 
         # Print results
         if not out_rows:
             print("[INFO] No matching MP4 files for the given SQL and options.")
         else:
-            for dc, cam, path_str, size_mb in out_rows:
-                print(f"{dc}\t{cam}\t{size_mb} MB\t{path_str}")
+            for recording_date, case_no, cam, path_str, size_mb in out_rows:
+                print(f"{recording_date}\t{case_no}\t{cam}\t{size_mb} MB\t{path_str}")
 
         # Optional CSV
         if args.save_csv:
@@ -226,7 +242,7 @@ def main():
             out.parent.mkdir(parents=True, exist_ok=True)
             with open(out, "w", newline="", encoding="utf-8") as f:
                 w = csv.writer(f)
-                w.writerow(["date_case", "camera", "mp4_path", "size_mb"])
+                w.writerow(["recording_date", "case_no", "camera", "mp4_path", "size_mb"])
                 w.writerows(out_rows)
             print(f"[OK] Saved CSV with {len(out_rows)} rows -> {out}")
 

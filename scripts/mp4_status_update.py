@@ -14,7 +14,7 @@ Expected directory layout:
 
 The script:
   - Walks the tree and computes status per camera for each case
-  - INSERT OR IGNORE the date_case row
+  - INSERT OR IGNORE the (recording_date, case_no) row
   - UPDATE the camera columns with the computed status
 """
 
@@ -37,15 +37,16 @@ CAMERAS = [
 ]
 # ------------------------------------------------
 
-def parse_date_case(data_dir_name: str, case_dir_name: str) -> str | None:
-    """Convert DATA_YY-MM-DD + CaseN -> YYYY-MM-DD_N (e.g., DATA_23-02-05 + Case1 -> 2023-02-05_1)."""
+def parse_recording_date_and_case(data_dir_name: str, case_dir_name: str) -> tuple[str, int] | None:
+    """Convert DATA_YY-MM-DD + CaseN -> (YYYY-MM-DD, N) (e.g., DATA_23-02-05 + Case1 -> ('2023-02-05', 1))."""
     m = re.fullmatch(r"DATA_(\d{2})-(\d{2})-(\d{2})", data_dir_name)
     n = re.fullmatch(r"Case(\d+)", case_dir_name)
     if not m or not n:
         return None
     yy, mm, dd = m.groups()
     yyyy = f"20{yy}" if int(yy) <= 69 else f"19{yy}"
-    return f"{yyyy}-{mm}-{dd}_{n.group(1)}"
+    case_no = int(n.group(1))
+    return f"{yyyy}-{mm}-{dd}", case_no
 
 def compute_camera_status(camera_dir: Path, threshold_bytes: int) -> int:
     """
@@ -77,13 +78,15 @@ def compute_camera_status(camera_dir: Path, threshold_bytes: int) -> int:
 
 def ensure_table_columns(conn: sqlite3.Connection, table: str, cameras: list[str]) -> None:
     """
-    Ensure the `mp4_status` table exists with date_case + camera columns.
+    Ensure the `mp4_status` table exists with recording_date + case_no + camera columns.
     If your table already exists, missing camera columns will be added.
     """
     cur = conn.cursor()
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS "{table}" (
-            date_case TEXT PRIMARY KEY
+            recording_date TEXT NOT NULL,
+            case_no INTEGER NOT NULL,
+            PRIMARY KEY (recording_date, case_no)
         );
     """)
     cur.execute(f"PRAGMA table_info('{table}')")
@@ -93,17 +96,17 @@ def ensure_table_columns(conn: sqlite3.Connection, table: str, cameras: list[str
         cur.execute(f'ALTER TABLE "{table}" ADD COLUMN "{col}" INTEGER')
     conn.commit()
 
-def upsert_row(conn: sqlite3.Connection, table: str, date_case: str, status_map: dict) -> None:
+def upsert_row(conn: sqlite3.Connection, table: str, recording_date: str, case_no: int, status_map: dict) -> None:
     """INSERT OR IGNORE a row, then UPDATE camera columns with computed statuses."""
     cur = conn.cursor()
-    cur.execute(f'INSERT OR IGNORE INTO "{table}" (date_case) VALUES (?)', (date_case,))
+    cur.execute(f'INSERT OR IGNORE INTO "{table}" (recording_date, case_no) VALUES (?, ?)', (recording_date, case_no))
     sets = []
     vals = []
     for cam, val in status_map.items():
         sets.append(f'"{cam}" = ?')
         vals.append(int(val))
-    vals.append(date_case)
-    cur.execute(f'UPDATE "{table}" SET {", ".join(sets)} WHERE date_case = ?', vals)
+    vals.extend([recording_date, case_no])
+    cur.execute(f'UPDATE "{table}" SET {", ".join(sets)} WHERE recording_date = ? AND case_no = ?', vals)
 
 def main():
     ap = argparse.ArgumentParser(description="Update mp4_status (1/2/3) based on mp4 sizes per camera.")
@@ -120,8 +123,8 @@ def main():
 
     threshold_bytes = args.threshold_mb * 1024 * 1024
 
-    # Collect statuses per date_case
-    updates: dict[str, dict[str, int]] = {}
+    # Collect statuses per (recording_date, case_no)
+    updates: dict[tuple[str, int], dict[str, int]] = {}
 
     for data_dir in root.iterdir():
         if not data_dir.is_dir() or not data_dir.name.startswith("DATA_"):
@@ -129,34 +132,35 @@ def main():
         for case_dir in data_dir.iterdir():
             if not case_dir.is_dir() or not case_dir.name.startswith("Case"):
                 continue
-            date_case = parse_date_case(data_dir.name, case_dir.name)
-            if not date_case:
+            parsed = parse_recording_date_and_case(data_dir.name, case_dir.name)
+            if not parsed:
                 continue
+            recording_date, case_no = parsed
 
             status_map = {}
             for cam in CAMERAS:
                 cam_path = case_dir / cam
                 status_map[cam] = compute_camera_status(cam_path, threshold_bytes)
-            updates[date_case] = status_map
+            updates[(recording_date, case_no)] = status_map
 
     if not updates:
         print("[WARN] Found no cases to update.")
         return
 
     # Show summary
-    print(f"[INFO] Found {len(updates)} date_case entries under {root}")
+    print(f"[INFO] Found {len(updates)} cases under {root}")
     if args.dry_run:
-        for dc in sorted(updates):
-            statuses = ", ".join(f"{k}={v}" for k, v in updates[dc].items())
-            print(f"  {dc}: {statuses}")
+        for (recording_date, case_no) in sorted(updates):
+            statuses = ", ".join(f"{k}={v}" for k, v in updates[(recording_date, case_no)].items())
+            print(f"  {recording_date} Case {case_no}: {statuses}")
         return
 
     # Write to DB
     conn = sqlite3.connect(args.db)
     try:
         ensure_table_columns(conn, args.table, CAMERAS)
-        for dc, sm in updates.items():
-            upsert_row(conn, args.table, dc, sm)
+        for (recording_date, case_no), sm in updates.items():
+            upsert_row(conn, args.table, recording_date, case_no, sm)
         conn.commit()
         print(f"[OK] Updated '{args.table}' with {len(updates)} rows (threshold {args.threshold_mb} MB).")
     finally:

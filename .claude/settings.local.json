@@ -32,7 +32,8 @@
       "Bash(tasklist:*)",
       "Bash(del check_anesthetic.py)",
       "Bash(streamlit run:*)",
-      "Bash(del configpaths.py)"
+      "Bash(del configpaths.py)",
+      "Bash(sqlite3:*)"
     ],
     "deny": [],
     "ask": []

@@ -18,11 +18,11 @@ st.title("ScalpelLab – Streamlit SQLite Database Manager")
 # Project overview section
 st.markdown("""
 
-### 🛠 **Available Tools**
-- **Browse**: Query and explore database records 
-- **Edit**: Modify database records through forms
-- **Status Summary**: View processing statistics and summaries
-- **Scripts**: Run automated data processing and export scripts
+### 🛠 **Available Pages**
+- **🔎 Browse**: Query and explore database tables with search functionality
+- **✏️ Edit**: Add, modify, and manage database records through interactive forms
+- **📊 Status Summary**: View MP4/SEQ processing statistics, camera distributions, and visual charts
+- **👁️ Views**: Access and query database views for specialized data perspectives
 
 Navigate using the sidebar to access different features and tools.
 """)
