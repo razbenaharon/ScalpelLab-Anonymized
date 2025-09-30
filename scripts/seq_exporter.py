@@ -3,10 +3,68 @@ import sys
 import json
 import sqlite3
 import time
+import signal
+import subprocess
+import select
 from subprocess import Popen, CREATE_NEW_CONSOLE, PIPE, STDOUT
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Iterable
 import argparse
+
+# ============================================
+# Aggressive process killing for Windows
+# ============================================
+def force_kill_process(proc: Popen, process_name: str = "CLExport.exe") -> bool:
+    """
+    Aggressively kill a process using multiple methods.
+    Returns True if process was successfully killed.
+    """
+    if proc.poll() is not None:
+        return True  # Already dead
+
+    try:
+        # Method 1: Standard terminate
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+            return True
+        except subprocess.TimeoutExpired:
+            pass
+    except Exception:
+        pass
+
+    try:
+        # Method 2: Kill signal
+        proc.kill()
+        try:
+            proc.wait(timeout=2)
+            return True
+        except subprocess.TimeoutExpired:
+            pass
+    except Exception:
+        pass
+
+    # Method 3: Windows taskkill command (most aggressive)
+    try:
+        if os.name == 'nt':  # Windows
+            subprocess.run(['taskkill', '/F', '/IM', process_name],
+                         capture_output=True, timeout=5)
+            # Also kill by PID if we have it
+            if hasattr(proc, 'pid') and proc.pid:
+                subprocess.run(['taskkill', '/F', '/PID', str(proc.pid)],
+                             capture_output=True, timeout=5)
+        else:  # Unix-like
+            if hasattr(proc, 'pid') and proc.pid:
+                os.kill(proc.pid, signal.SIGKILL)
+
+        # Check if it's really dead
+        try:
+            proc.wait(timeout=1)
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+    except Exception:
+        return False
 
 # ============================================
 # Cameras (columns expected in your seq_status)
@@ -31,7 +89,11 @@ CLEXPORT_PATHS = [
 # ============================================
 MAX_RETRIES_MP4 = 2  # attempts for MP4
 MAX_RETRIES_AVI = 1  # attempts for AVI fallback
-TIMEOUT_SECS = 20  # increased timeout for larger files
+BASE_TIMEOUT_SECS = 30  # base timeout for small files
+TIMEOUT_PER_GB = 20  # additional seconds per GB of file size
+MIN_TIMEOUT_SECS = 15  # minimum timeout regardless of file size
+MAX_TIMEOUT_SECS = 300  # maximum timeout (5 minutes) for huge files
+SILENT_TIMEOUT_SECS = 30  # kill if no output/progress for this long
 KILL_AFTER_ERROR_LINES = 6  # slightly more tolerant
 SUPPRESS_CLEXPORT_OUTPUT = True  # keep console clean
 MIN_VALID_FILE_SIZE_MB = 1.0  # Minimum size for valid MP4/AVI file
@@ -39,6 +101,30 @@ MIN_VALID_FILE_SIZE_MB = 1.0  # Minimum size for valid MP4/AVI file
 # Broader phrase so we catch both MP4/AVI variants
 ERROR_LINE_SIGNATURE = "Error writing video"
 
+
+# =========================
+# Dynamic timeout calculation
+# =========================
+def calculate_timeout(file_path: Path) -> int:
+    """
+    Calculate timeout based on file size.
+    Small files: 15-30 seconds
+    Large files: up to 5 minutes
+    """
+    try:
+        file_size_bytes = file_path.stat().st_size
+        file_size_gb = file_size_bytes / (1024 * 1024 * 1024)
+
+        # Calculate timeout: base + additional time per GB
+        timeout = BASE_TIMEOUT_SECS + (file_size_gb * TIMEOUT_PER_GB)
+
+        # Apply min/max limits
+        timeout = max(MIN_TIMEOUT_SECS, min(MAX_TIMEOUT_SECS, timeout))
+
+        return int(timeout)
+    except Exception:
+        # If we can't get file size, use base timeout
+        return BASE_TIMEOUT_SECS
 
 # =========================
 # CLExport helpers
@@ -141,7 +227,8 @@ def export_seq_once_streaming(
         spawn_console: bool = False,
         timeout_secs: Optional[int] = None,
         kill_after_error_lines: Optional[int] = None,
-        suppress_console_output: bool = True
+        suppress_console_output: bool = True,
+        debug: bool = False
 ) -> Tuple[int, str]:
     """
     Run a single CLExport attempt while *stream-reading* its stdout.
@@ -171,16 +258,19 @@ def export_seq_once_streaming(
                     return (0, f"Exported successfully ({container})") if ret == 0 else (ret,
                                                                                          f"CLExport failed with exit code {ret} ({container})")
                 if timeout_secs is not None and (time.time() - start) > timeout_secs:
-                    try:
-                        proc.kill()
-                    finally:
-                        return 1, f"CLExport timed out after {timeout_secs}s ({container})"
+                    killed = force_kill_process(proc, "CLExport.exe")
+                    if killed:
+                        return 1, f"CLExport timed out and killed after {timeout_secs}s ({container})"
+                    else:
+                        return 1, f"CLExport timed out after {timeout_secs}s - WARNING: Process may still be running ({container})"
                 time.sleep(0.2)
         except Exception as e:
             return 1, f"Exception running CLExport: {str(e)} ({container})"
 
     # Not spawning a console: capture merged stdout/stderr to detect spam and enforce fast-kill.
     try:
+        if debug:
+            print(f"[DEBUG] Starting CLExport with command: {' '.join(cmd)}")
         proc = Popen(
             cmd,
             text=True,
@@ -189,6 +279,8 @@ def export_seq_once_streaming(
             stderr=STDOUT,
             creationflags=creationflags
         )
+        if debug:
+            print(f"[DEBUG] CLExport process started with PID: {proc.pid}")
     except Exception as e:
         return 1, f"Exception starting CLExport: {str(e)} ({container})"
 
@@ -200,45 +292,91 @@ def export_seq_once_streaming(
             print(line, end="")
 
     try:
+        loop_count = 0
+        last_output_time = start_time
+
         while True:
-            if timeout_secs is not None and (time.time() - start_time) > timeout_secs:
-                try:
-                    proc.kill()
-                finally:
-                    return 1, f"CLExport timed out after {timeout_secs}s ({container})"
+            loop_count += 1
+            elapsed = time.time() - start_time
+            silent_time = time.time() - last_output_time
+
+            # Debug every 100 loops (about 5 seconds)
+            if debug and loop_count % 100 == 0:
+                print(f"[DEBUG] Loop {loop_count}, elapsed: {elapsed:.1f}s, process status: {proc.poll()}")
+
+            # Early kill for silent processes (running but no output)
+            if proc.poll() is None and silent_time > SILENT_TIMEOUT_SECS:
+                if debug:
+                    print(f"[DEBUG] Process silent for {silent_time:.1f}s, likely stuck - killing PID {proc.pid}")
+                killed = force_kill_process(proc, "CLExport.exe")
+                if killed:
+                    return 1, f"CLExport killed after {silent_time:.0f}s of silence - likely corrupted file ({container})"
+                else:
+                    return 1, f"CLExport silent for {silent_time:.0f}s - WARNING: Process may still be running ({container})"
+
+            # Normal timeout (longer for large files)
+            if timeout_secs is not None and elapsed > timeout_secs:
+                if debug:
+                    print(f"[DEBUG] Full timeout reached after {elapsed:.1f}s, killing process PID {proc.pid}")
+                killed = force_kill_process(proc, "CLExport.exe")
+                if killed:
+                    return 1, f"CLExport timed out and killed after {timeout_secs}s ({container})"
+                else:
+                    return 1, f"CLExport timed out after {timeout_secs}s - WARNING: Process may still be running ({container})"
 
             ret = proc.poll()
             if ret is not None:
+                if debug:
+                    print(f"[DEBUG] Process finished with exit code: {ret}")
                 if proc.stdout:
                     for _ in proc.stdout:
                         pass
                 return (0, f"Exported successfully ({container})") if ret == 0 else (ret,
                                                                                      f"CLExport failed with exit code {ret} ({container})")
 
+            # Check if there's output available (non-blocking approach)
+            line = ""
             if proc.stdout:
-                line = proc.stdout.readline()
-            else:
-                line = ""
+                try:
+                    # Try to read with a very short timeout
+                    import msvcrt
+                    if os.name == 'nt':  # Windows
+                        # For Windows, we'll just do a quick poll and timeout approach
+                        if proc.poll() is None:  # Process still running
+                            # Don't block on readline if process is running
+                            pass
+                        else:
+                            # Process finished, safe to read remaining output
+                            line = proc.stdout.readline()
+                    else:
+                        # Unix systems can use select
+                        import select
+                        ready, _, _ = select.select([proc.stdout], [], [], 0.05)
+                        if ready:
+                            line = proc.stdout.readline()
+                except Exception as e:
+                    if debug:
+                        print(f"[DEBUG] Error reading stdout: {e}")
+                    line = ""
 
             if not line:
                 time.sleep(0.05)
                 continue
 
+            # Reset silent timer when we get actual output
+            last_output_time = time.time()
             mirror(line)
 
             if ERROR_LINE_SIGNATURE in line:
                 error_count += 1
+                if debug:
+                    print(f"[DEBUG] Error line detected, count: {error_count}")
                 if kill_after_error_lines is not None and error_count >= kill_after_error_lines:
-                    try:
-                        proc.kill()
-                    finally:
-                        return 1, f"Killed after {error_count} repeated errors ({container})"
+                    force_kill_process(proc, "CLExport.exe")
+                    return 1, f"Killed after {error_count} repeated errors ({container})"
 
     except Exception as e:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        force_kill_process(proc, "CLExport.exe")
         return 1, f"Exception while streaming CLExport output: {str(e)} ({container})"
 
 
@@ -341,24 +479,35 @@ def query_channel_dirs_from_db(db_path: str,
                                table: str,
                                cameras: List[str],
                                only_value: int = 1,
-                               debug: bool = False) -> List[str]:
+                               debug: bool = False,
+                               include_all: bool = False) -> List[str]:
     """
-    Reads rows from `table` (expects columns: recording_date, case_no + camera flags),
+    Reads rows from `table` (expects normalized structure: recording_date, case_no, camera_name, value),
     returns a list of relative channel dirs like 'DATA_22-12-04\\Case1\\General_3'
-    for all cameras where flag == only_value.
+    for all cameras where value == only_value, or all cameras if include_all=True.
     """
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
-    cols = ", ".join(cameras)
-    rows = cur.execute(f"SELECT recording_date, case_no, {cols} FROM {table}").fetchall()
+
+    # Build query for normalized structure
+    if include_all:
+        query = f"SELECT recording_date, case_no, camera_name FROM {table}"
+        rows = cur.execute(query).fetchall()
+    else:
+        query = f"SELECT recording_date, case_no, camera_name FROM {table} WHERE value = ?"
+        rows = cur.execute(query, (only_value,)).fetchall()
     conn.close()
 
     all_rel_dirs: List[str] = []
     for row in rows:
-        recording_date, case_no, *vals = row
+        recording_date, case_no, camera_name = row
         if not isinstance(recording_date, str) or not isinstance(case_no, int):
             if debug:
                 print(f"[WARN] Bad recording_date/case_no format: {recording_date}, {case_no}")
+            continue
+
+        # Filter by cameras list if provided
+        if cameras and camera_name not in cameras:
             continue
 
         # recording_date: 'YYYY-MM-DD' -> 'DATA_YY-MM-DD'
@@ -368,12 +517,8 @@ def query_channel_dirs_from_db(db_path: str,
         data_folder = f"DATA_{yy}-{mm}-{dd}"
         case_folder = f"Case{case_no}"
 
-        # collect cameras with given value (default == 1)
-        active_channels = [cam for cam, v in zip(cameras, vals) if v == only_value]
-
         # build relative dirs
-        for cam in active_channels:
-            all_rel_dirs.append(f"{data_folder}\\{case_folder}\\{cam}")
+        all_rel_dirs.append(f"{data_folder}\\{case_folder}\\{camera_name}")
 
     return dedupe_preserve_order(all_rel_dirs)
 
@@ -392,7 +537,8 @@ def run_pipeline(db_path: str,
                  spawn_console: bool,
                  skip_existing: bool,
                  clean_invalid: bool,
-                 fallback_avi: bool) -> None:
+                 fallback_avi: bool,
+                 include_all: bool = False) -> None:
     seq_root_path = Path(seq_root).resolve()
     out_root_path = Path(out_root).resolve()
     out_root_path.mkdir(parents=True, exist_ok=True)
@@ -413,7 +559,8 @@ def run_pipeline(db_path: str,
         table=table,
         cameras=CAMERAS,
         only_value=only_value,
-        debug=debug
+        debug=debug,
+        include_all=include_all
     )
 
     if debug:
@@ -486,11 +633,15 @@ def run_pipeline(db_path: str,
 
                 # Attempt MP4 with retries
                 if status == "PENDING":
+                    # Calculate dynamic timeout based on file size
+                    dynamic_timeout = calculate_timeout(seq_path)
+
                     # Get next available filename for MP4
                     exported_name, mp4_path = get_next_available_filename(out_dir, base_stem, ".mp4")
 
                     if debug:
-                        print(f"[{idx}/{total}] TRY MP4 -> {mp4_path}")
+                        file_size_mb = seq_path.stat().st_size / (1024 * 1024)
+                        print(f"[{idx}/{total}] TRY MP4 -> {mp4_path} (size: {file_size_mb:.1f}MB, timeout: {dynamic_timeout}s)")
 
                     for attempt in range(1, MAX_RETRIES_MP4 + 1):
                         if debug:
@@ -503,9 +654,10 @@ def run_pipeline(db_path: str,
                             container="mp4",
                             simulate=simulate,
                             spawn_console=spawn_console,
-                            timeout_secs=TIMEOUT_SECS,
+                            timeout_secs=dynamic_timeout,
                             kill_after_error_lines=KILL_AFTER_ERROR_LINES,
-                            suppress_console_output=SUPPRESS_CLEXPORT_OUTPUT
+                            suppress_console_output=SUPPRESS_CLEXPORT_OUTPUT,
+                            debug=debug
                         )
 
                         if exitcode == 0 and is_valid_video_file(mp4_path):
@@ -545,9 +697,10 @@ def run_pipeline(db_path: str,
                             container="avi",
                             simulate=simulate,
                             spawn_console=spawn_console,
-                            timeout_secs=TIMEOUT_SECS * 2,  # Give AVI more time
+                            timeout_secs=dynamic_timeout * 2,  # Give AVI more time
                             kill_after_error_lines=KILL_AFTER_ERROR_LINES * 2,  # More tolerant for AVI
-                            suppress_console_output=SUPPRESS_CLEXPORT_OUTPUT
+                            suppress_console_output=SUPPRESS_CLEXPORT_OUTPUT,
+                            debug=debug
                         )
 
                         if exitcode == 0 and is_valid_video_file(avi_path):
@@ -624,12 +777,13 @@ if __name__ == "__main__":
         seq_root=SEQ_ROOT,
         out_root=OUT_ROOT,
         channel_names={},  # add mapping if you want different names
-        only_value=1,  # which DB flag to export
+        only_value=1,  # which DB flag to export (ignored when include_all=True)
         simulate=False,  # True = no export, just print
         debug=True,  # print extra info
         spawn_console=False,  # True = open a window per export
         skip_existing=True,  # skip files already exported
         clean_invalid=True,  # remove partial files first
-        fallback_avi=False  # try AVI if MP4 fails
+        fallback_avi=False,  # try AVI if MP4 fails
+        include_all=True  # process all seq files in database, not just status=1
     )
 

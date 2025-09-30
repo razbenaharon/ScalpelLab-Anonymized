@@ -1,4 +1,4 @@
-//// ScalpelLab Database, exported 2025-09-25
+//// ScalpelLab Database, exported 2025-09-30
 //// Paste into https://dbdiagram.io
 
 //// System table from SQLite. Usually not modeled, included here for completeness.
@@ -38,37 +38,27 @@ Table recording_details {
 Table mp4_status {
   recording_date     varchar [pk]
   case_no            int [pk]
-  Cart_Center_2      int
-  Cart_LT_4          int
-  Cart_RT_1          int
-  General_3          int
-  Monitor            int
-  Patient_Monitor    int
-  Ventilator_Monitor int
-  Injection_Port     int
+  camera_name        varchar [pk]
+  value              int
   comments           varchar
+  size(mb)           int
   Note: 'MP4 export status per camera, 1..n semantics driven by your app'
 }
 
 Table seq_status {
   recording_date     varchar [pk] // Part of FK to recording_details
   case_no            int [pk] // Part of FK to recording_details
-  Cart_Center_2      int
-  Cart_LT_4          int
-  Cart_RT_1          int
-  General_3          int
-  Monitor            int
-  Patient_Monitor    int
-  Ventilator_Monitor int
-  Injection_Port     int
+  camera_name        varchar [pk]
+  value              int
   comments           varchar
+  size(mb)           int
   Note: 'SEQ ingestion status per camera, values are non negative. 1 more than 200MB, 2 under 200MB, 3 missing, 4 format problem'
 }
 
 // Relationships detected from database:
 Ref: recording_details.anesthetic_key > anesthetic.anesthetic_key
-Ref: seq_status.case_no > recording_details.case_no
 Ref: seq_status.recording_date > recording_details.recording_date
+Ref: seq_status.recording_date > recording_details.case_no
 Ref: mp4_status.case_no > recording_details.case_no
 Ref: mp4_status.recording_date > recording_details.recording_date
 Ref: analysis_information.case_no > recording_details.case_no

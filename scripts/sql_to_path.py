@@ -6,17 +6,18 @@ Execute a FULL SQL query against your status table and output matching MP4 file 
 Your SQL must SELECT at least:
   - recording_date
   - case_no
-  - One or more camera columns with status values (1/2/3[/4])
+  - camera_name
+  - value (status)
 
 Examples (PowerShell):
   # 1) Inline SQL
-  python sql_to_path.py --sql "SELECT recording_date, case_no, Monitor, Patient_Monitor FROM mp4_status WHERE Monitor=1"
+  python sql_to_path.py --sql "SELECT recording_date, case_no, camera_name, value FROM mp4_status WHERE camera_name='Monitor' AND value=1"
 
   # 2) SQL from file
   python sql_to_path.py --sql-file "F:\\Room_8_Data\\Scalpel_Raz\\queries\\monitor_good.sql"
 
   # Restrict to specific cameras and keep only the largest file
-  python sql_to_path.py --sql "SELECT recording_date, case_no, Monitor, General_3 FROM mp4_status WHERE Monitor=1" ^
+  python sql_to_path.py --sql "SELECT recording_date, case_no, camera_name, value FROM mp4_status WHERE camera_name IN ('Monitor', 'General_3') AND value=1" ^
                         --only-cameras Monitor,General_3 --largest-only --save-csv "F:\\good_paths.csv"
 
 Notes:
@@ -67,13 +68,13 @@ def data_dir_from_recording_date_and_case(recording_date: str, case_no: int) -> 
     return f"DATA_{yy}-{mm}-{dd}", f"Case{case_no}"
 
 
-def list_mp4s_for_camera(root: Path, recording_date: str, case_no: int, camera: str) -> List[Path]:
-    """Return list of *.mp4 under <root>/DATA_YY-MM-DD/CaseN/<camera>/ recursively."""
+def list_files_for_camera(root: Path, recording_date: str, case_no: int, camera: str, file_ext: str = "mp4") -> List[Path]:
+    """Return list of files under <root>/DATA_YY-MM-DD/CaseN/<camera>/ recursively."""
     data_dir, case_dir = data_dir_from_recording_date_and_case(recording_date, case_no)
     cam_dir = root / data_dir / case_dir / camera
     if not cam_dir.exists():
         return []
-    return [p for p in cam_dir.rglob("*.mp4") if p.is_file()]
+    return [p for p in cam_dir.rglob(f"*.{file_ext}") if p.is_file()]
 
 
 def pick_largest(paths: Iterable[Path]) -> List[Path]:
@@ -114,44 +115,46 @@ def get_paths(sql_query: str,
     conn = sqlite3.connect(db_path)
     try:
         colnames, rows = run_sql(conn, sql_query)
-        if not rows or "recording_date" not in colnames or "case_no" not in colnames:
+        required_cols = ["recording_date", "case_no", "camera_name", "value"]
+        if not rows or not all(col in colnames for col in required_cols):
             return []
-
-        returned_cameras = [c for c in CAMERAS if c in colnames]
-        if only_cameras:
-            returned_cameras = [c for c in returned_cameras if c in only_cameras]
 
         out_rows = []
         for row in rows:
             row_map = dict(zip(colnames, row))
             recording_date = row_map["recording_date"]
             case_no = row_map["case_no"]
-            for cam in returned_cameras:
-                st = row_map.get(cam)
-                if int(st or 0) != status_value:
-                    continue
+            camera_name = row_map["camera_name"]
+            value = row_map["value"]
 
-                # Generate expected path whether files exist or not
+            if int(value or 0) != status_value:
+                continue
+
+            if only_cameras and camera_name not in only_cameras:
+                continue
+
+            # Auto-detect file extension based on root path
+            file_ext = "seq" if "Sequence_Backup" in str(root) else "mp4"
+
+            # Try to find actual files
+            files = list_files_for_camera(root, recording_date, case_no, camera_name, file_ext)
+
+            if files:
+                # Files exist - process them
+                if largest_only:
+                    files = pick_largest(files)
+                for p in files:
+                    try:
+                        size_mb = round(p.stat().st_size / (1024 * 1024), 2)
+                    except OSError:
+                        size_mb = -1.0
+                    out_rows.append((recording_date, case_no, camera_name, str(p), size_mb))
+            else:
+                # Files don't exist - return expected path
                 data_dir, case_dir = data_dir_from_recording_date_and_case(recording_date, case_no)
-                expected_path = root / data_dir / case_dir / cam
-
-                # Try to find actual files
-                mp4s = list_mp4s_for_camera(root, recording_date, case_no, cam)
-
-                if mp4s:
-                    # Files exist - process them
-                    if largest_only:
-                        mp4s = pick_largest(mp4s)
-                    for p in mp4s:
-                        try:
-                            size_mb = round(p.stat().st_size / (1024 * 1024), 2)
-                        except OSError:
-                            size_mb = -1.0
-                        out_rows.append((recording_date, case_no, cam, str(p), size_mb))
-                else:
-                    # Files don't exist - return expected path
-                    expected_file_path = expected_path / "*.mp4"
-                    out_rows.append((recording_date, case_no, cam, str(expected_file_path), 0.0))
+                expected_path = root / data_dir / case_dir / camera_name
+                expected_file_path = expected_path / f"*.{file_ext}"
+                out_rows.append((recording_date, case_no, camera_name, str(expected_file_path), 0.0))
         return out_rows
     finally:
         conn.close()
@@ -182,24 +185,14 @@ def main():
         if not rows:
             print("[INFO] Query returned no rows.")
             return
-        if "recording_date" not in colnames or "case_no" not in colnames:
-            raise SystemExit("[ERROR] SQL must SELECT 'recording_date' and 'case_no'.")
 
-        # Cameras actually present in the SQL result:
-        returned_cameras = [c for c in CAMERAS if c in colnames]
-        if not returned_cameras:
-            raise SystemExit("[ERROR] SQL must SELECT at least one camera column: " + ", ".join(CAMERAS))
+        required_cols = ["recording_date", "case_no", "camera_name", "value"]
+        missing_cols = [col for col in required_cols if col not in colnames]
+        if missing_cols:
+            raise SystemExit(f"[ERROR] SQL must SELECT: {', '.join(missing_cols)}")
 
         # Camera restriction (optional)
         restrict = [c.strip() for c in args.only_cameras.split(",") if c.strip()]
-        if restrict:
-            unknown = [c for c in restrict if c not in returned_cameras]
-            if unknown:
-                raise SystemExit(f"[ERROR] --only-cameras contains columns not in SQL result: {unknown}\n"
-                                 f"Returned cameras: {returned_cameras}")
-            cameras_to_check = restrict
-        else:
-            cameras_to_check = returned_cameras
 
         out_rows: List[Tuple[str, int, str, str, float]] = []  # (recording_date, case_no, camera, path_str, size_mb)
 
@@ -208,26 +201,39 @@ def main():
             row_map = dict(zip(colnames, row))
             recording_date = row_map["recording_date"]
             case_no = row_map["case_no"]
+            camera_name = row_map["camera_name"]
+            value = row_map["value"]
 
-            for cam in cameras_to_check:
-                st = row_map.get(cam)
-                try:
-                    st_int = int(st) if st is not None else None
-                except (TypeError, ValueError):
-                    st_int = None
-                if st_int != args.status_value:
-                    continue
+            try:
+                st_int = int(value) if value is not None else None
+            except (TypeError, ValueError):
+                st_int = None
+            if st_int != args.status_value:
+                continue
 
-                mp4s = list_mp4s_for_camera(root, recording_date, case_no, cam)
-                if args.largest_only:
-                    mp4s = pick_largest(mp4s)
+            if restrict and camera_name not in restrict:
+                continue
 
-                for p in mp4s:
+            # Auto-detect file extension based on root path
+            file_ext = "seq" if "Sequence_Backup" in str(root) else "mp4"
+
+            files = list_files_for_camera(root, recording_date, case_no, camera_name, file_ext)
+            if args.largest_only:
+                files = pick_largest(files)
+
+            if files:
+                for p in files:
                     try:
                         size_mb = round(p.stat().st_size / (1024 * 1024), 2)
                     except OSError:
                         size_mb = -1.0
-                    out_rows.append((recording_date, case_no, cam, str(p), size_mb))
+                    out_rows.append((recording_date, case_no, camera_name, str(p), size_mb))
+            else:
+                # Files don't exist - return expected path
+                data_dir, case_dir = data_dir_from_recording_date_and_case(recording_date, case_no)
+                expected_path = root / data_dir / case_dir / camera_name
+                expected_file_path = expected_path / f"*.{file_ext}"
+                out_rows.append((recording_date, case_no, camera_name, str(expected_file_path), 0.0))
 
         # Print results
         if not out_rows:

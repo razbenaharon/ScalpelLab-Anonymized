@@ -34,19 +34,21 @@ with st.sidebar:
 def fetch_camera_stats(db_path: str, table: str, cameras: list[str]) -> tuple[int, dict]:
     with connect(db_path) as conn:
         cur = conn.cursor()
-        cur.execute(f"SELECT COUNT(*) FROM {table}")
-        total_rows = cur.fetchone()[0]
+        # Count distinct cases in the normalized table
+        cur.execute(f"SELECT COUNT(DISTINCT recording_date || '-' || case_no) FROM {table}")
+        total_cases = cur.fetchone()[0]
         camera_stats = {cam: Counter() for cam in cameras}
-        cur.execute(f"SELECT {', '.join(cameras)} FROM {table}")
-        for row in cur.fetchall():
-            for cam, st_val in zip(cameras, row):
-                if st_val is None:
-                    continue
-                try:
-                    camera_stats[cam][int(st_val)] += 1
-                except (TypeError, ValueError):
-                    pass
-        return total_rows, camera_stats
+        # Query normalized schema: (recording_date, case_no, camera_name, value, comments, size(mb))
+        placeholders = ','.join(['?'] * len(cameras))
+        cur.execute(f"SELECT camera_name, value FROM {table} WHERE camera_name IN ({placeholders})", cameras)
+        for camera_name, status_value in cur.fetchall():
+            if status_value is None:
+                continue
+            try:
+                camera_stats[camera_name][int(status_value)] += 1
+            except (TypeError, ValueError):
+                pass
+        return total_cases, camera_stats
 
 def stats_to_dataframe(camera_stats: dict, labels: dict, status_order) -> pd.DataFrame:
     rows = []
@@ -70,7 +72,7 @@ def section(title: str, table_name: str, labels: dict, order: tuple[int, ...]):
     st.subheader(title)
     try:
         total_rows, camera_stats = fetch_camera_stats(db_path, table_name, cameras)
-        st.caption(f"Total rows in `{table_name}`: **{total_rows}**")
+        st.caption(f"Total cases in `{table_name}`: **{total_rows}**")
         df = stats_to_dataframe(camera_stats, labels, order)
 
         if df.empty:

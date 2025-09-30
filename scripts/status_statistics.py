@@ -36,13 +36,11 @@ def fetch_camera_stats(conn: sqlite3.Connection, table: str, cameras: list[str])
     total_rows = cur.fetchone()[0]
 
     camera_stats = {cam: Counter() for cam in cameras}
-    cur.execute(f"SELECT {', '.join(cameras)} FROM {table}")
-    for row in cur.fetchall():
-        for cam, st in zip(cameras, row):
-            if st is None:
-                continue
+    cur.execute(f"SELECT camera_name, value FROM {table}")
+    for camera_name, value in cur.fetchall():
+        if camera_name in cameras and value is not None:
             try:
-                camera_stats[cam][int(st)] += 1
+                camera_stats[camera_name][int(value)] += 1
             except (TypeError, ValueError):
                 # if some stray non-integer sneaks in
                 pass
@@ -90,19 +88,8 @@ def main():
     args = ap.parse_args()
 
     conn = sqlite3.connect(args.db)
+
     try:
-        # mp4 table
-        try:
-            total_rows, mp4_stats = fetch_camera_stats(conn, args.mp4_table, CAMERAS)
-            print(f"[INFO] Total rows in {args.mp4_table}: {total_rows}")
-            print_table(
-                title=f"Per-camera status distribution ({args.mp4_table})",
-                camera_stats=mp4_stats,
-                labels=LABELS_MP4,
-                status_order=(1,2,3),
-            )
-        except sqlite3.Error as e:
-            print(f"[WARN] Could not read {args.mp4_table}: {e}")
 
         # seq table
         try:
@@ -116,6 +103,21 @@ def main():
             )
         except sqlite3.Error as e:
             print(f"[WARN] Could not read {args.seq_table}: {e}")
+
+
+
+        # mp4 table
+        try:
+            total_rows, mp4_stats = fetch_camera_stats(conn, args.mp4_table, CAMERAS)
+            print(f"[INFO] Total rows in {args.mp4_table}: {total_rows}")
+            print_table(
+                title=f"Per-camera status distribution ({args.mp4_table})",
+                camera_stats=mp4_stats,
+                labels=LABELS_MP4,
+                status_order=(1, 2, 3),
+            )
+        except sqlite3.Error as e:
+            print(f"[WARN] Could not read {args.mp4_table}: {e}")
 
     finally:
         conn.close()
