@@ -88,7 +88,7 @@ def ensure_table_exists(conn: sqlite3.Connection, table: str) -> None:
             camera_name TEXT NOT NULL,
             value INTEGER,
             comments TEXT,
-            "size(mb)" INTEGER,
+            size_mb INTEGER,
             PRIMARY KEY (recording_date, case_no, camera_name)
         );
     """)
@@ -98,7 +98,7 @@ def get_existing_data(conn: sqlite3.Connection, table: str, recording_date: str,
     """Get existing status values for a case, return dict {camera_name: (value, size_mb)}."""
     cur = conn.cursor()
     try:
-        cur.execute(f'SELECT camera_name, value, "size(mb)" FROM "{table}" WHERE recording_date = ? AND case_no = ?', (recording_date, case_no))
+        cur.execute(f'SELECT camera_name, value, size_mb FROM "{table}" WHERE recording_date = ? AND case_no = ?', (recording_date, case_no))
         rows = cur.fetchall()
         return {row[0]: (row[1], row[2]) for row in rows}
     except sqlite3.OperationalError:
@@ -109,7 +109,7 @@ def upsert_camera_data(conn: sqlite3.Connection, table: str, recording_date: str
     cur = conn.cursor()
     cur.execute(f'''
         INSERT OR REPLACE INTO "{table}"
-        (recording_date, case_no, camera_name, value, "size(mb)")
+        (recording_date, case_no, camera_name, value, size_mb)
         VALUES (?, ?, ?, ?, ?)
     ''', (recording_date, case_no, camera_name, value, size_mb))
 

@@ -38,7 +38,7 @@ def fetch_camera_stats(db_path: str, table: str, cameras: list[str]) -> tuple[in
         cur.execute(f"SELECT COUNT(DISTINCT recording_date || '-' || case_no) FROM {table}")
         total_cases = cur.fetchone()[0]
         camera_stats = {cam: Counter() for cam in cameras}
-        # Query normalized schema: (recording_date, case_no, camera_name, value, comments, size(mb))
+        # Query normalized schema: (recording_date, case_no, camera_name, value, comments, size_mb)
         placeholders = ','.join(['?'] * len(cameras))
         cur.execute(f"SELECT camera_name, value FROM {table} WHERE camera_name IN ({placeholders})", cameras)
         for camera_name, status_value in cur.fetchall():

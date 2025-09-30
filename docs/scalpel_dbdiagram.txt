@@ -41,7 +41,7 @@ Table mp4_status {
   camera_name        varchar [pk]
   value              int
   comments           varchar
-  size(mb)           int
+  size_mb            int
   Note: 'MP4 export status per camera, 1..n semantics driven by your app'
 }
 
@@ -51,7 +51,7 @@ Table seq_status {
   camera_name        varchar [pk]
   value              int
   comments           varchar
-  size(mb)           int
+  size_mb            int
   Note: 'SEQ ingestion status per camera, values are non negative. 1 more than 200MB, 2 under 200MB, 3 missing, 4 format problem'
 }
 
