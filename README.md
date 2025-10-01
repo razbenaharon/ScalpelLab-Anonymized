@@ -2,6 +2,34 @@
 
 A Streamlit-based database management system for managing and monitoring surgical recording data, including MP4 video files and SEQ sequence files from multiple camera sources.
 
+## Installation
+
+### Requirements
+- Python 3.7 or higher
+- Required Python packages (install via pip):
+
+```bash
+pip install streamlit
+pip install pandas
+pip install sqlite3  # Usually included with Python
+pip install pathlib  # Usually included with Python
+```
+
+### Quick Setup
+1. Clone or download the project
+2. Navigate to the project directory
+3. Install requirements:
+   ```bash
+   pip install -r requirements.txt
+   ```
+   *Note: If requirements.txt doesn't exist, install packages individually as shown above*
+
+4. Ensure the `ScalpelDatabase.sqlite` file is in the project root directory
+5. Run the application:
+   ```bash
+   streamlit run app.py
+   ```
+
 ## Features
 
 ### 📊 Streamlit Web Interface
@@ -11,15 +39,8 @@ A Streamlit-based database management system for managing and monitoring surgica
 - **Views**: Access and query database views for specialized data perspectives
 
 
-### Running the Web Interface
-```bash
-streamlit run app.py
-```
-
-The app will open in your browser at `http://localhost:8501`
-
 ### Database Configuration
-Set the database path in the sidebar to the ScalpelDatabase.sqlite file in the project directory
+Set the database path in the sidebar to the ScalpelDatabase.sqlite file in the project directory. The app will open in your browser at `http://localhost:8501`
 
 
 ### 🎥 Video File Management
