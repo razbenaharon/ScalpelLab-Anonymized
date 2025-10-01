@@ -31,7 +31,7 @@ import os
 import re
 import sqlite3
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Tuple, Union, Optional
 
 # ------------ Defaults (edit if needed) ------------
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ScalpelDatabase.sqlite")
@@ -107,7 +107,7 @@ def get_paths(sql_query: str,
               root_path: str = DEFAULT_ROOT,
               status_value: int = 1,
               largest_only: bool = False,
-              only_cameras: list[str] | None = None) -> list[tuple[str, int, str, str, float]]:
+              only_cameras: Optional[List[str]] = None) -> List[Tuple[str, int, str, str, float]]:
     """
     Run SQL query and return list of (recording_date, case_no, camera, mp4_path, size_mb).
     """
